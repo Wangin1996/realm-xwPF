@@ -162,6 +162,8 @@ IP哈希 (iphash)
 7. 如有状态变化，创建更新标记文件
 ```
 
+客户端可使用指令`while ($true) { (Invoke-WebRequest -Uri 'http://ifconfig.me/ip' -UseBasicParsing).Content; Start-Sleep -Seconds 1 }` 或 `while true; do curl -s ifconfig.me; echo; sleep 1; done` 实时监听IP变化情况
+
 </details>
 
 </details>
