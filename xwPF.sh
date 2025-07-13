@@ -3750,6 +3750,7 @@ generate_endpoints_from_rules() {
     declare -A port_groups
     declare -A port_configs
     declare -A port_weights
+    declare -A port_roles
 
     # 第一步：收集所有启用的规则并按端口分组（不进行故障转移过滤）
     declare -A port_rule_files
@@ -3761,8 +3762,13 @@ generate_endpoints_from_rules() {
                 # 存储端口配置（使用第一个规则的配置作为基准）
                 if [ -z "${port_configs[$port_key]}" ]; then
                     port_configs[$port_key]="$PROTOCOL_TYPE|$SECURITY_LEVEL|$TLS_SERVER_NAME|$TLS_CERT_PATH|$TLS_KEY_PATH|$BALANCE_MODE"
-                    # 存储权重配置
+                    # 存储权重配置和角色信息
                     port_weights[$port_key]="$WEIGHTS"
+                    port_roles[$port_key]="$RULE_ROLE"
+                elif [ "${port_roles[$port_key]}" != "$RULE_ROLE" ]; then
+                    # 检测到同一端口有不同角色的规则，跳过此规则
+                    echo -e "${YELLOW}警告: 端口 $port_key 已被角色 ${port_roles[$port_key]} 的规则占用，跳过角色 $RULE_ROLE 的规则${NC}" >&2
+                    continue
                 fi
 
                 # 收集目标：根据规则角色使用不同的字段
@@ -3958,8 +3964,8 @@ generate_endpoints_from_rules() {
             \"balance\": \"$balance_mode: $weight_config\""
         fi
 
-        # 添加传输配置
-        local role="1"  # 中转服务器
+        # 添加传输配置 - 使用存储的规则角色信息
+        local role="${port_roles[$port_key]:-1}"  # 使用存储的角色，默认为中转服务器
         local transport_config=$(get_transport_config "$security_level" "$tls_server_name" "$tls_cert_path" "$tls_key_path" "$role" "$WS_PATH")
         if [ -n "$transport_config" ]; then
             endpoint_config="$endpoint_config,
