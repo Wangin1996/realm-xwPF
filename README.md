@@ -47,7 +47,7 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 <details>
 <summary>点击展开离线安装方法</summary>
 
-适用于无法直接访问 GitHub 的服务器环境：
+适用于无法直接访问 GitHub 的服务器环境：(only ipv6等等)
 
 **下载必要文件**
 
@@ -68,7 +68,7 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 ## ✨ 核心特性
 
 ### 🎯 核心功能
-- **🚀 一键安装** - 单条命令完成所有安装和配置，支持**离线安装**
+- **🚀 一键安装** - 单条命令快速上手，支持网络受限环境下**离线安装**
 - **⚡ 原生 Realm 全功能** - 完整支持 realm 的所有原生功能
 - **🔄 故障转移** - 自动故障检测
 - **⚖️ 负载均衡** - 支持轮询、IP哈希等策略，可配置权重分配
