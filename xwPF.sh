@@ -3441,16 +3441,31 @@ install_realm() {
         echo -e "${BLUE}未发现本地压缩包，使用在线下载...${NC}"
     fi
 
-    # 从GitHub获取最新版本号
+    # 获取最新版本号
     echo -e "${YELLOW}获取最新版本信息...${NC}"
-    LATEST_VERSION=$(curl -s --connect-timeout 10 --max-time 30 \
+
+    # 重试机制获取版本号（重试1次，超时3秒）
+    LATEST_VERSION=""
+
+    # 第一次尝试
+    LATEST_VERSION=$(curl -s --connect-timeout 3 --max-time 10 \
         "https://api.github.com/repos/zhboner/realm/releases/latest" 2>/dev/null | \
         grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
+    # 如果失败，立即重试1次
     if [ -z "$LATEST_VERSION" ]; then
-        echo -e "${RED}错误: 无法从GitHub获取最新版本号${NC}"
-        exit 1
+        LATEST_VERSION=$(curl -s --connect-timeout 3 --max-time 10 \
+            "https://api.github.com/repos/zhboner/realm/releases/latest" 2>/dev/null | \
+            grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
+
+    # 如果两次都失败，使用硬编码版本号
+    if [ -z "$LATEST_VERSION" ]; then
+        echo -e "${YELLOW}使用当前最新版本 v2.7.0${NC}"
+        LATEST_VERSION="v2.7.0"
+    fi
+
+    echo -e "${GREEN}✓ 检测到最新版本: ${LATEST_VERSION}${NC}"
     echo -e "${GREEN}✓ 检测到最新版本: ${LATEST_VERSION}${NC}"
 
     # 检测系统架构
@@ -4401,9 +4416,15 @@ smart_install() {
     echo ""
 
     # 步骤4: 下载最新的 realm 主程序
-    install_realm
-
-    echo -e "${YELLOW}输入快捷命令 ${GREEN}pf${YELLOW} 进入脚本交互界面${NC}"
+    if install_realm; then
+        echo -e "${GREEN}=== 安装完成！ ===${NC}"
+        echo -e "${YELLOW}输入快捷命令 ${GREEN}pf${YELLOW} 进入脚本交互界面${NC}"
+    else
+        echo -e "${RED}错误: 无法从GitHub获取最新版本号${NC}"
+        echo -e "${YELLOW}网络可能不稳定或GitHub访问受限${NC}"
+        echo -e "${BLUE}稍后重试或参考https://github.com/zywe03/realm-xwPF#网络受限环境安装${NC}"
+        echo -e "${YELLOW}输入快捷命令 ${GREEN}pf${YELLOW} 可进入脚本交互界面${NC}"
+    fi
 }
 
 # 服务管理 - 启动
@@ -5189,8 +5210,10 @@ show_brief_status() {
 
     # 检查 realm 二进制文件是否存在
     if [ ! -f "${REALM_PATH}" ] || [ ! -x "${REALM_PATH}" ]; then
-        echo -e "${YELLOW}=== 未安装 ===${NC}"
-        echo -e "${BLUE}请先运行 安装配置 来设置 Realm 端口转发服务${NC}"
+        echo -e "${RED}错误: 无法从GitHub获取最新版本号${NC}"
+        echo -e "${YELLOW}网络可能不稳定或GitHub访问受限${NC}"
+        echo -e "${BLUE}稍后重试或参考https://github.com/zywe03/realm-xwPF#网络受限环境安装${NC}"
+        echo -e "${YELLOW}输入快捷命令 ${GREEN}pf${YELLOW} 可进入脚本交互界面${NC}"
         return
     fi
 

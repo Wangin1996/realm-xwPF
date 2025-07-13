@@ -116,8 +116,6 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 
 </details>
 
-</details>
-
 <details>
 <summary><strong>负载均衡+故障转移</strong></summary>
 
@@ -163,10 +161,6 @@ IP哈希 (iphash)
 ```
 
 客户端可使用指令`while ($true) { (Invoke-WebRequest -Uri 'http://ifconfig.me/ip' -UseBasicParsing).Content; Start-Sleep -Seconds 1 }` 或 `while true; do curl -s ifconfig.me; echo; sleep 1; done` 实时监听IP变化情况
-
-</details>
-
-</details>
 
 </details>
 
@@ -283,7 +277,7 @@ IP哈希 (iphash)
 
 </details>
 
-## 🚀 Quick Start
+## 🚀 Quick Start (For Network-Restricted Environments, See Below)
 
 ### One-Click Installation
 
@@ -297,12 +291,12 @@ curl -fsSL https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | su
 wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sudo bash -s install
 ```
 
-## 🧭  Offline Installation (Network-Restricted Environments)
+## 🧭 Offline Installation (Network-Restricted Environments)
 
 <details>
 <summary>Click to expand offline installation methods</summary>
 
-Suitable for server environments that cannot directly access GitHub:
+Suitable for server environments that cannot directly access GitHub: (only ipv6, etc.)
 
 **Download Required Files**
 
@@ -323,10 +317,11 @@ Place them in the same directory. When starting the script and selecting **1. In
 ## ✨ Core Features
 
 ### 🎯 Core Functionality
-- **🚀 One-Click Installation** - Complete installation and configuration with a single command, supports offline installation
+- **🚀 One-Click Installation** - Single command for quick setup, supports **offline installation** for network-restricted environments
 - **⚡ Full Native Realm Functionality** - Complete support for all native realm features
 - **🔄 Failover** - Automatic failure detection
 - **⚖️ Load Balancing** - Supports round-robin, IP hash strategies with configurable weight distribution
+- **🕳️ Tunnel Building** - Dual-realm architecture for tunnel construction
 - **📋 Multi-Rule Management** - Supports multi-rule configuration for relay servers and landing servers
 - **✅ Multiple Virtualization Support** - Automatic detection and adaptation
 
@@ -411,10 +406,14 @@ Native realm does not currently support failover.
 7. If status changes, create update marker file
 ```
 
+Clients can use the command `while ($true) { (Invoke-WebRequest -Uri 'http://ifconfig.me/ip' -UseBasicParsing).Content; Start-Sleep -Seconds 1 }` or `while true; do curl -s ifconfig.me; echo; sleep 1; done` to monitor IP changes in real-time.
+
 </details>
 
 <details>
-<summary><strong>Port Forwarding & Chain Proxy (Segmented Proxy)</strong></summary>
+<summary><strong>Port Forwarding vs Chain Proxy (Segmented Proxy)</strong></summary>
+
+Two concepts that are easily confused.
 
 **Simple Understanding**
 
@@ -424,7 +423,15 @@ Port forwarding only handles forwarding traffic from one port to another port.
 
 ![d4a7047e80a3530da9082c2e7a7e0968.png](https://i.mji.rip/2025/07/12/d4a7047e80a3530da9082c2e7a7e0968.png)
 
-As you can see, it's divided into two proxy segments, hence also called segmented proxy (detailed configuration will be covered later).
+As you can see, it's divided into two proxy segments, hence also called segmented proxy or secondary proxy (detailed configuration will be covered later).
+
+**No superiority or inferiority** - depends on the use case.
+
+| Chain Proxy | Port Forwarding |
+| :---------- | :-------------- |
+| Higher configuration complexity | Lower configuration complexity (L4 layer forwarding) |
+| Overhead from unpacking/packing at each hop | Native TCP/UDP passthrough, theoretically faster |
+| More precise outbound control and traffic splitting (configure exit at each hop) | Difficult outbound control |
 
 </details>
 
@@ -436,11 +443,11 @@ As you can see, it's divided into two proxy segments, hence also called segmente
 | `curl` | Download and IP retrieval | ✅ |
 | `wget` | Backup download tool | ✅ |
 | `tar` | Compression/decompression tool | ✅ |
-| `systemctl` | Service coordination and management | ✅ |
+| `systemctl` | Commander coordinating work | ✅ |
 | `bc` | Numerical calculations | ✅ |
 | `nc` | Network connection testing | ✅ |
 | `grep`/`cut` | Text processing and recognition | ✅ |
-| `inotify` | File marking | ✅ |
+| `inotify` | Marker files | ✅ |
 
 ## 📁 File Structure
 
