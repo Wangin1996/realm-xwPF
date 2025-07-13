@@ -992,17 +992,19 @@ list_rules_for_management() {
                     status_text="禁用"
                 fi
 
-                local display_target=$(smart_display_target "$REMOTE_HOST")
+                # 落地服务器使用FORWARD_TARGET而不是REMOTE_HOST
+                local target_host="${FORWARD_TARGET%:*}"
+                local target_port="${FORWARD_TARGET##*:}"
+                local display_target=$(smart_display_target "$target_host")
                 local rule_display_name="$RULE_NAME"
                 if [ $exit_count -gt 1 ]; then
                     rule_display_name="$RULE_NAME-$exit_count"
                 fi
 
-                # 构建负载均衡信息
-                local balance_mode="${BALANCE_MODE:-off}"
-                local balance_info=$(get_balance_info_display "$REMOTE_HOST" "$balance_mode")
+                # 落地服务器不需要负载均衡信息
+                local balance_info=""
 
-                echo -e "  ID ${BLUE}$RULE_ID${NC}: ${GREEN}$rule_display_name${NC} ($LISTEN_PORT → $display_target:$REMOTE_PORT) [${status_color}$status_text${NC}]$balance_info"
+                echo -e "  ID ${BLUE}$RULE_ID${NC}: ${GREEN}$rule_display_name${NC} ($LISTEN_PORT → $display_target:$target_port) [${status_color}$status_text${NC}]$balance_info"
             fi
         fi
     done
@@ -1071,8 +1073,14 @@ list_all_rules() {
                 # 构建安全级别显示
                 local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
                 echo -e "  协议: ${YELLOW}$PROTOCOL_TYPE${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC} | 状态: ${status_color}$status_text${NC}"
-                # 在规则列表中保持原始地址显示，便于管理
-                echo -e "  监听: ${GREEN}$LISTEN_PORT${NC} → 转发: ${GREEN}$REMOTE_HOST:$REMOTE_PORT${NC}"
+                # 根据规则角色显示不同的转发信息
+                if [ "$RULE_ROLE" = "2" ]; then
+                    # 落地服务器使用FORWARD_TARGET
+                    echo -e "  监听: ${GREEN}$LISTEN_PORT${NC} → 转发: ${GREEN}$FORWARD_TARGET${NC}"
+                else
+                    # 中转服务器使用REMOTE_HOST:REMOTE_PORT
+                    echo -e "  监听: ${GREEN}$LISTEN_PORT${NC} → 转发: ${GREEN}$REMOTE_HOST:$REMOTE_PORT${NC}"
+                fi
                 echo -e "  创建时间: $CREATED_TIME"
                 echo ""
             fi
@@ -1845,12 +1853,15 @@ rules_management_menu() {
                             # 显示详细的转发配置信息
                             local protocol_display="$PROTOCOL_TYPE"
                             local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
-                            local display_target=$(smart_display_target "$REMOTE_HOST")
+                            # 落地服务器使用FORWARD_TARGET而不是REMOTE_HOST
+                            local target_host="${FORWARD_TARGET%:*}"
+                            local target_port="${FORWARD_TARGET##*:}"
+                            local display_target=$(smart_display_target "$target_host")
                             local rule_display_name="$RULE_NAME"
                             if [ $exit_count -gt 1 ]; then
                                 rule_display_name="$RULE_NAME-$exit_count"
                             fi
-                            echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                            echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$target_port"
                             echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
                         fi
                     fi
@@ -1863,8 +1874,18 @@ rules_management_menu() {
                 for rule_file in "${RULES_DIR}"/rule-*.conf; do
                     if [ -f "$rule_file" ]; then
                         if read_rule_file "$rule_file" && [ "$ENABLED" = "false" ]; then
-                            local display_target=$(smart_display_target "$REMOTE_HOST")
-                            echo -e "  • ${GRAY}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT (已禁用)"
+                            # 根据规则角色使用不同的字段
+                            if [ "$RULE_ROLE" = "2" ]; then
+                                # 落地服务器使用FORWARD_TARGET
+                                local target_host="${FORWARD_TARGET%:*}"
+                                local target_port="${FORWARD_TARGET##*:}"
+                                local display_target=$(smart_display_target "$target_host")
+                                echo -e "  • ${GRAY}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port (已禁用)"
+                            else
+                                # 中转服务器使用REMOTE_HOST
+                                local display_target=$(smart_display_target "$REMOTE_HOST")
+                                echo -e "  • ${GRAY}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT (已禁用)"
+                            fi
                         fi
                     fi
                 done
@@ -2760,9 +2781,9 @@ configure_exit_server() {
 
     # 转发目标地址配置（简化版）
     while true; do
-        read -p "转发目标IP地址(默认:127.0.0.1,::1): " input_target
+        read -p "转发目标IP地址(默认:127.0.0.1): " input_target
         if [ -z "$input_target" ]; then
-            input_target="127.0.0.1,::1"
+            input_target="127.0.0.1"
         fi
 
         if validate_target_address "$input_target"; then
@@ -3744,28 +3765,34 @@ generate_endpoints_from_rules() {
                     port_weights[$port_key]="$WEIGHTS"
                 fi
 
-                # 收集目标：优先使用TARGET_STATES，否则使用REMOTE_HOST
+                # 收集目标：根据规则角色使用不同的字段
                 local targets_to_add=""
 
-                if [ "$BALANCE_MODE" != "off" ] && [ -n "$TARGET_STATES" ]; then
-                    # 负载均衡模式且有TARGET_STATES，使用TARGET_STATES
-                    targets_to_add="$TARGET_STATES"
+                if [ "$RULE_ROLE" = "2" ]; then
+                    # 落地服务器使用FORWARD_TARGET
+                    targets_to_add="$FORWARD_TARGET"
                 else
-                    # 非负载均衡模式或无TARGET_STATES，使用REMOTE_HOST:REMOTE_PORT
-                    if [[ "$REMOTE_HOST" == *","* ]]; then
-                        # REMOTE_HOST包含多个地址
-                        IFS=',' read -ra host_list <<< "$REMOTE_HOST"
-                        for host in "${host_list[@]}"; do
-                            host=$(echo "$host" | xargs)  # 去除空格
-                            if [ -n "$targets_to_add" ]; then
-                                targets_to_add="$targets_to_add,$host:$REMOTE_PORT"
-                            else
-                                targets_to_add="$host:$REMOTE_PORT"
-                            fi
-                        done
+                    # 中转服务器：优先使用TARGET_STATES，否则使用REMOTE_HOST
+                    if [ "$BALANCE_MODE" != "off" ] && [ -n "$TARGET_STATES" ]; then
+                        # 负载均衡模式且有TARGET_STATES，使用TARGET_STATES
+                        targets_to_add="$TARGET_STATES"
                     else
-                        # REMOTE_HOST是单个地址
-                        targets_to_add="$REMOTE_HOST:$REMOTE_PORT"
+                        # 非负载均衡模式或无TARGET_STATES，使用REMOTE_HOST:REMOTE_PORT
+                        if [[ "$REMOTE_HOST" == *","* ]]; then
+                            # REMOTE_HOST包含多个地址
+                            IFS=',' read -ra host_list <<< "$REMOTE_HOST"
+                            for host in "${host_list[@]}"; do
+                                host=$(echo "$host" | xargs)  # 去除空格
+                                if [ -n "$targets_to_add" ]; then
+                                    targets_to_add="$targets_to_add,$host:$REMOTE_PORT"
+                                else
+                                    targets_to_add="$host:$REMOTE_PORT"
+                                fi
+                            done
+                        else
+                            # REMOTE_HOST是单个地址
+                            targets_to_add="$REMOTE_HOST:$REMOTE_PORT"
+                        fi
                     fi
                 fi
 
@@ -4079,8 +4106,18 @@ EOF
     for rule_file in "${RULES_DIR}"/rule-*.conf; do
         if [ -f "$rule_file" ]; then
             if read_rule_file "$rule_file" && [ "$ENABLED" = "true" ]; then
-                local display_target=$(smart_display_target "$REMOTE_HOST")
-                echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT ($PROTOCOL_TYPE, ${IP_VERSION:-ipv4_then_ipv6})"
+                # 根据规则角色使用不同的字段
+                if [ "$RULE_ROLE" = "2" ]; then
+                    # 落地服务器使用FORWARD_TARGET
+                    local target_host="${FORWARD_TARGET%:*}"
+                    local target_port="${FORWARD_TARGET##*:}"
+                    local display_target=$(smart_display_target "$target_host")
+                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port ($PROTOCOL_TYPE, ${IP_VERSION:-ipv4_then_ipv6})"
+                else
+                    # 中转服务器使用REMOTE_HOST
+                    local display_target=$(smart_display_target "$REMOTE_HOST")
+                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT ($PROTOCOL_TYPE, ${IP_VERSION:-ipv4_then_ipv6})"
+                fi
             fi
         fi
     done
@@ -4461,8 +4498,18 @@ service_status() {
         for rule_file in "${RULES_DIR}"/rule-*.conf; do
             if [ -f "$rule_file" ]; then
                 if read_rule_file "$rule_file" && [ "$ENABLED" = "true" ]; then
-                    local display_target=$(smart_display_target "$REMOTE_HOST")
-                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                    # 根据规则角色使用不同的字段
+                    if [ "$RULE_ROLE" = "2" ]; then
+                        # 落地服务器使用FORWARD_TARGET
+                        local target_host="${FORWARD_TARGET%:*}"
+                        local target_port="${FORWARD_TARGET##*:}"
+                        local display_target=$(smart_display_target "$target_host")
+                        echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port"
+                    else
+                        # 中转服务器使用REMOTE_HOST
+                        local display_target=$(smart_display_target "$REMOTE_HOST")
+                        echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                    fi
                     # 构建安全级别显示
                     local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
                     echo -e "    协议: ${YELLOW}$PROTOCOL_TYPE${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
@@ -5029,8 +5076,18 @@ show_config() {
                         fi
 
                         echo -e "  规则 $RULE_ID: ${status_color}$status_text${NC} - $RULE_NAME"
-                        local display_target=$(smart_display_target "$REMOTE_HOST")
-                        echo -e "    监听: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                        # 根据规则角色使用不同的字段
+                        if [ "$RULE_ROLE" = "2" ]; then
+                            # 落地服务器使用FORWARD_TARGET
+                            local target_host="${FORWARD_TARGET%:*}"
+                            local target_port="${FORWARD_TARGET##*:}"
+                            local display_target=$(smart_display_target "$target_host")
+                            echo -e "    监听: $LISTEN_PORT → $display_target:$target_port"
+                        else
+                            # 中转服务器使用REMOTE_HOST
+                            local display_target=$(smart_display_target "$REMOTE_HOST")
+                            echo -e "    监听: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                        fi
                         local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
                         echo -e "    协议: $PROTOCOL_TYPE | IP版本: ${IP_VERSION:-ipv4_then_ipv6} | 安全: $security_display"
                         if [ "$SECURITY_LEVEL" = "tls_self" ]; then
@@ -5214,12 +5271,15 @@ show_brief_status() {
                         # 显示详细的转发配置信息
                         local protocol_display="$PROTOCOL_TYPE"
                         local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
-                        local display_target=$(smart_display_target "$REMOTE_HOST")
+                        # 落地服务器使用FORWARD_TARGET而不是REMOTE_HOST
+                        local target_host="${FORWARD_TARGET%:*}"
+                        local target_port="${FORWARD_TARGET##*:}"
+                        local display_target=$(smart_display_target "$target_host")
                         local rule_display_name="$RULE_NAME"
                         if [ $exit_count -gt 1 ]; then
                             rule_display_name="$RULE_NAME-$exit_count"
                         fi
-                        echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
+                        echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$target_port"
                         echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
                     fi
                 fi
@@ -5232,8 +5292,18 @@ show_brief_status() {
             for rule_file in "${RULES_DIR}"/rule-*.conf; do
                 if [ -f "$rule_file" ]; then
                     if read_rule_file "$rule_file" && [ "$ENABLED" = "false" ]; then
-                        local display_target=$(smart_display_target "$REMOTE_HOST")
-                        echo -e "  • ${WHITE}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT (已禁用)"
+                        # 根据规则角色使用不同的字段
+                        if [ "$RULE_ROLE" = "2" ]; then
+                            # 落地服务器使用FORWARD_TARGET
+                            local target_host="${FORWARD_TARGET%:*}"
+                            local target_port="${FORWARD_TARGET##*:}"
+                            local display_target=$(smart_display_target "$target_host")
+                            echo -e "  • ${WHITE}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port (已禁用)"
+                        else
+                            # 中转服务器使用REMOTE_HOST
+                            local display_target=$(smart_display_target "$REMOTE_HOST")
+                            echo -e "  • ${WHITE}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT (已禁用)"
+                        fi
                     fi
                 fi
             done
@@ -6151,8 +6221,11 @@ read_rule_file() {
 
     # 清空变量
     unset RULE_ID RULE_NAME RULE_ROLE LISTEN_PORT REMOTE_HOST REMOTE_PORT
+    unset FORWARD_TARGET PROTOCOL_TYPE SECURITY_LEVEL IP_VERSION
+    unset TLS_SERVER_NAME TLS_CERT_PATH TLS_KEY_PATH WS_PATH
     unset ENABLED BALANCE_MODE FAILOVER_ENABLED HEALTH_CHECK_INTERVAL
     unset FAILURE_THRESHOLD SUCCESS_THRESHOLD CONNECTION_TIMEOUT
+    unset TARGET_STATES WEIGHTS CREATED_TIME
 
     # 读取配置
     source "$rule_file"
