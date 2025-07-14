@@ -1,5 +1,5 @@
-# xwPF Realm 全功能一键脚本，助你快速部署和配置 Realm，用于满足网络转发需求。
-# xwPF Realm: A full-featured one-click script for quickly deploying and configuring Realm to meet network relay needs.
+# xwPF realm 全功能一键脚本，助你快速部署和配置 realm，满足网络转发需求
+# xwPF realm: A full-featured one-click script for quickly deploying and configuring realm to meet network relay needs.
 
 [中文](#中文版) | [English](#english-version)
 
@@ -67,23 +67,20 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 
 ## ✨ 核心特性
 
-### 🎯 核心功能
 - **🚀 一键安装** - 单条命令快速上手，支持网络受限环境下**离线安装**
-- **⚡ 原生 Realm 全功能** - 完整支持 realm 的所有原生功能
-- **🔄 故障转移** - 自动故障检测
+- **⚡ 原生Realm全功能** - 完整支持最新版realm的所有原生功能
+- **🔄 故障转移** - 使用系统工具,完成自动故障检测,保持轻量化
 - **⚖️ 负载均衡** - 支持轮询、IP哈希等策略，可配置权重分配
 - **🕳️ 搭建隧道** - 双端realm架构搭建隧道
 - **📋 多规则管理** - 支持中转服务器和落地服务器的多规则配置
 - **✅ 支持多种虚拟化** - 自动检测和适配
 
-### 🛠️ 管理功能
 - **📊 可视化界面** - 简洁的数字选择菜单，无需记忆复杂命令
 - **📋 导出/导入配置文件** - 查看当前配置复制导出、识别同目录 JSON 配置文件导入
-- **⏰ 定时任务** - 支持定时重启、维护等自动化任务
+- **⏰ 定时任务** - 支持定时重启、响应ddns域名更新解析
 - **📁 状态管理** - 使用配置文件统一管理所有状态信息
 - **🔧 智能检测** - 自动检测系统架构、依赖工具、端口冲突
 
-### 🔒 安全与稳定
 - **🛡️ 协议支持** - 支持 TCP/UDP 协议，支持 TLS，ws 加密传输
 - **🔍 连通性测试** - 自动测试配置的连接可用性
 - **📝 智能日志管理** - 自动限制日志大小，防止磁盘占用过大
@@ -92,7 +89,9 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 ## 🗺️ 示意图理解不同场景下工作原理(推荐)
 
 <details>
-<summary><strong>单realm架构只负责转发</strong></summary>
+<summary><strong>单端realm架构只负责转发</strong></summary>
+
+中转机安装realm,出口机安装代理软件
 
 中转机realm只负责原模原样把设置端口收到的数据包进行转发,加密解密由代理工具负责
 
@@ -100,13 +99,12 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 
 ![4b6c044f27859f847690011589b0523a.png](https://i.mji.rip/2025/07/11/4b6c044f27859f847690011589b0523a.png)
 
-
-</details>
-
 </details>
 
 <details>
-<summary><strong>双realm架构搭建隧道</strong></summary>
+<summary><strong>双端realm架构搭建隧道</strong></summary>
+
+中转机安装realm,出口机安装realm和代理软件
 
 在realm和realm之间多套一层realm支持的加密
 
@@ -117,27 +115,27 @@ wget -qO- https://raw.githubusercontent.com/zywe03/realm-xwPF/main/xwPF.sh | sud
 </details>
 
 <details>
-<summary><strong>负载均衡+故障转移</strong></summary>
+<summary><strong>负载均衡+故障转移(单对多)</strong></summary>
 
-同一端口转发有多个出口机(规则组)
+- 同一端口转发有多个出口机(规则组)
 
-轮询 (roundrobin)
+- `轮询`模式 (roundrobin)
 
 不断切换规则组里的出口机
 
-IP哈希 (iphash)
+- `IP哈希`模式 (iphash)
 
 基于源 IP 的哈希值，决定流量走向，保证同一 IP 的请求始终落到同一出口机
 
-权重即分配概率
+- 权重即分配概率
 
-故障转移
+- 故障转移
 
 检测到某个出口故障，暂时移出负载均衡列表，恢复之后会自动添加进负载均衡列表
 
 原生realm暂不支持故障转移
 
-脚本实现原理
+- 脚本的实现原理
 ```
 1. systemd定时器触发 (每4秒)
    ↓
@@ -179,18 +177,19 @@ IP哈希 (iphash)
 
 可以看到分成了两段代理链,所以又称为分段代理,二级代理（有机会再细讲配置）
 
-**没有优劣之分**看使用场景
+**没有优劣之分**看使用场景,注意有的机不允许安装代理(会被检测)
 
 | 链式代理 (Chained Proxy) | 端口转发 (Port Forwarding) |
 | :------------------- | :--------------------- |
-| 配置复杂度较高              | 配置复杂度低（L4层转发）          |
+| 链路的机都要安装代理软件           | 中转机安装转发,出口机安装代理        |
+| 配置文件复杂度较高            | 配置文件复杂度低（L4层转发）        |
 | 会有每跳解包/封包开销          | 原生 TCP/UDP 透传，理论上更快    |
 | 出站控制分流更精确（每跳配置出口）    | 难出站控制                  |
 
 </details>
 
 ### 依赖工具
-**Linux 原生轻量化工具**，保持系统干净轻量化
+原则优先**Linux 原生轻量化工具**，保持系统干净轻量化
 
 | 工具 | 用途 | 自动安装 |
 |------|------|------|
@@ -316,23 +315,20 @@ Place them in the same directory. When starting the script and selecting **1. In
 
 ## ✨ Core Features
 
-### 🎯 Core Functionality
 - **🚀 One-Click Installation** - Single command for quick setup, supports **offline installation** for network-restricted environments
-- **⚡ Full Native Realm Functionality** - Complete support for all native realm features
-- **🔄 Failover** - Automatic failure detection
+- **⚡ Full Native Realm Functionality** - Complete support for all native features of the latest realm version
+- **🔄 Failover** - Uses system tools to achieve automatic failure detection while maintaining lightweight design
 - **⚖️ Load Balancing** - Supports round-robin, IP hash strategies with configurable weight distribution
 - **🕳️ Tunnel Building** - Dual-realm architecture for tunnel construction
 - **📋 Multi-Rule Management** - Supports multi-rule configuration for relay servers and landing servers
 - **✅ Multiple Virtualization Support** - Automatic detection and adaptation
 
-### 🛠️ Management Features
 - **📊 Visual Interface** - Clean numeric selection menu, no need to memorize complex commands
 - **📋 Export/Import Configuration Files** - View current configuration for copy/export, recognize JSON configuration files in the same directory for import
-- **⏰ Scheduled Tasks** - Support for scheduled restarts, maintenance, and other automated tasks
+- **⏰ Scheduled Tasks** - Support for scheduled restarts, responding to DDNS domain update resolution
 - **📁 Status Management** - Unified management of all status information using configuration files
 - **🔧 Intelligent Detection** - Automatic detection of system architecture, dependency tools, port conflicts
 
-### 🔒 Security & Stability
 - **🛡️ Protocol Support** - Supports TCP/UDP protocols, TLS, ws encrypted transmission
 - **🔍 Connectivity Testing** - Automatic testing of configured connection availability
 - **📝 Intelligent Log Management** - Automatic log size limitation to prevent excessive disk usage
@@ -341,7 +337,9 @@ Place them in the same directory. When starting the script and selecting **1. In
 ## 🗺️ Diagrams to Understand Working Principles in Different Scenarios (Recommended)
 
 <details>
-<summary><strong>Single Realm Architecture - Forwarding Only</strong></summary>
+<summary><strong>Single-End Realm Architecture - Forwarding Only</strong></summary>
+
+Relay server installs realm, exit server installs proxy software.
 
 The relay server's realm only forwards data packets received on the configured port as-is. Encryption/decryption is handled by proxy tools.
 
@@ -352,7 +350,9 @@ Therefore, the encryption protocol for the entire chain is determined by the exi
 </details>
 
 <details>
-<summary><strong>Dual Realm Architecture - Building Tunnels</strong></summary>
+<summary><strong>Dual-End Realm Architecture - Building Tunnels</strong></summary>
+
+Relay server installs realm, exit server installs realm and proxy software.
 
 An additional layer of realm-supported encryption is added between realm instances.
 
@@ -363,27 +363,27 @@ Therefore, the encryption chosen by the relay server's realm, masquerading domai
 </details>
 
 <details>
-<summary><strong>Load Balancing + Failover</strong></summary>
+<summary><strong>Load Balancing + Failover (One-to-Many)</strong></summary>
 
-Multiple exit servers (rule groups) for the same port forwarding.
+- Multiple exit servers (rule groups) for the same port forwarding
 
-**Round Robin (roundrobin)**
+- `Round Robin` mode (roundrobin)
 
 Continuously switches between exit servers in the rule group.
 
-**IP Hash (iphash)**
+- `IP Hash` mode (iphash)
 
 Based on the hash value of the source IP, determines traffic direction, ensuring requests from the same IP always go to the same exit server.
 
-**Weight** represents allocation probability.
+- Weight represents allocation probability
 
-**Failover**
+- Failover
 
 When a certain exit is detected as failed, it's temporarily removed from the load balancing list. It will be automatically added back to the load balancing list after recovery.
 
 Native realm does not currently support failover.
 
-**Script Implementation Principle**
+- Script's Implementation Principle
 ```
 1. systemd timer trigger (every 4 seconds)
    ↓
@@ -425,18 +425,19 @@ Port forwarding only handles forwarding traffic from one port to another port.
 
 As you can see, it's divided into two proxy segments, hence also called segmented proxy or secondary proxy (detailed configuration will be covered later).
 
-**No superiority or inferiority** - depends on the use case.
+**No superiority or inferiority** - depends on the use case. Note that some servers don't allow proxy installation (will be detected).
 
 | Chain Proxy | Port Forwarding |
 | :---------- | :-------------- |
-| Higher configuration complexity | Lower configuration complexity (L4 layer forwarding) |
+| All servers in the chain need proxy software installed | Relay server installs forwarding, exit server installs proxy |
+| Higher configuration file complexity | Lower configuration file complexity (L4 layer forwarding) |
 | Overhead from unpacking/packing at each hop | Native TCP/UDP passthrough, theoretically faster |
 | More precise outbound control and traffic splitting (configure exit at each hop) | Difficult outbound control |
 
 </details>
 
 ### Dependency Tools
-**Linux native lightweight tools**, keeping the system clean and lightweight
+Principle: prioritize **Linux native lightweight tools**, keeping the system clean and lightweight
 
 | Tool | Purpose | Auto Install |
 |------|---------|--------------|
