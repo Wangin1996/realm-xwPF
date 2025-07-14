@@ -41,7 +41,6 @@ BLUE='\033[0;34m'     # 信息、标识、中性操作
 WHITE='\033[1;37m'    # 关闭状态、默认文本
 NC='\033[0m'          # 重置颜色
 
-
 # 核心路径变量
 REALM_PATH="/usr/local/bin/realm"
 CONFIG_DIR="/etc/realm"
@@ -548,73 +547,6 @@ get_transport_config() {
             echo ""
             ;;
     esac
-}
-
-# 获取IP版本配置和DNS服务器
-get_ip_version_config() {
-    local ip_version="$1"
-    case "$ip_version" in
-        "ipv4_only")
-            echo '"mode": "ipv4_only",
-        "nameservers": [
-            "1.1.1.1:53",
-            "8.8.8.8:53"
-        ]'
-            ;;
-        "ipv6_only")
-            echo '"mode": "ipv6_only",
-        "nameservers": [
-            "[2606:4700:4700::1111]:53",
-            "[2001:4860:4860::8888]:53"
-        ]'
-            ;;
-        "ipv4_then_ipv6")
-            echo '"mode": "ipv4_then_ipv6",
-        "nameservers": [
-            "1.1.1.1:53",
-            "8.8.8.8:53",
-            "[2606:4700:4700::1111]:53",
-            "[2001:4860:4860::8888]:53"
-        ]'
-            ;;
-        *)
-            # 默认IPv4优先
-            echo '"mode": "ipv4_then_ipv6",
-        "nameservers": [
-            "1.1.1.1:53",
-            "8.8.8.8:53",
-            "[2606:4700:4700::1111]:53",
-            "[2001:4860:4860::8888]:53"
-        ]'
-            ;;
-    esac
-}
-
-# 获取DNS协议配置（根据用户选择的协议类型）
-get_dns_protocol_config() {
-    local protocol_type="$1"
-    case "$protocol_type" in
-        "tcp_only")
-            echo '"protocol": "tcp"'
-            ;;
-        "udp_only")
-            echo '"protocol": "udp"'
-            ;;
-        "tcp_udp")
-            echo '"protocol": "tcp_and_udp"'
-            ;;
-        *)
-            # 默认TCP+UDP
-            echo '"protocol": "tcp_and_udp"'
-            ;;
-    esac
-}
-
-# 获取DNS缓存配置
-get_dns_cache_config() {
-    echo '"min_ttl": 600,
-        "max_ttl": 1800,
-        "cache_size": 1024'
 }
 
 # 内置日志管理函数（优雅控制日志大小）
@@ -1536,7 +1468,7 @@ import_config_file() {
     echo ""
 
     # 获取脚本工作目录（智能搜索）
-    local script_dir=$(find_script_work_dir)
+    local script_dir=$(get_best_script_dir)
 
     # 扫描脚本工作目录下的.json文件
     echo -e "${BLUE}正在扫描配置文件...${NC}"
@@ -3152,96 +3084,122 @@ diagnose_system() {
     echo ""
 }
 
-# 多线程搜索 xwPF.sh 文件并找到最佳工作目录
-find_script_work_dir() {
-    # 定义搜索目录（按优先级排序）
-    local search_dirs=("/etc" "/root" "/home" "/opt" "/tmp" "/var" "/usr/local/bin" "/usr/bin" "/bin")
-    local found_dirs=()
-    local temp_file=$(mktemp)
+# 多线程并行搜索xwPF.sh脚本位置（带缓存）
+find_script_locations_enhanced() {
+    local cache_file="/tmp/xwPF_script_locations_cache"
+    local cache_timeout=604800  # 7天缓存，用户几乎不会改变脚本位置
 
-    # 并行搜索所有 xwPF.sh 文件（限制搜索深度避免过深搜索）
-    for dir in "${search_dirs[@]}"; do
-        if [ -d "$dir" ] && [ -r "$dir" ]; then
+    # 检查缓存是否有效
+    if [ -f "$cache_file" ]; then
+        local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+        if [ $cache_age -lt $cache_timeout ]; then
+            cat "$cache_file"
+            return 0
+        fi
+    fi
+
+    echo -e "${BLUE}正在多线程搜索脚本位置...${NC}" >&2
+
+    local temp_file=$(mktemp)
+    local search_roots=("/" "/usr" "/opt" "/home" "/root" "/var" "/tmp" "/etc")
+
+    # 并行搜索不同的根目录
+    for root in "${search_roots[@]}"; do
+        if [ -d "$root" ] && [ -r "$root" ]; then
             (
-                find "$dir" -maxdepth 3 -name "xwPF.sh" -type f 2>/dev/null | while read -r file; do
-                    if [ -f "$file" ] && [ -r "$file" ]; then
-                        echo "$(dirname "$file")" >> "$temp_file"
-                    fi
-                done
+                # 使用timeout避免搜索卡死
+                if command -v timeout >/dev/null 2>&1; then
+                    timeout 30 find "$root" -name "xwPF.sh" -type f 2>/dev/null | while read -r file; do
+                        if [ -f "$file" ] && [ -r "$file" ]; then
+                            echo "$(dirname "$file")" >> "$temp_file"
+                        fi
+                    done
+                else
+                    find "$root" -name "xwPF.sh" -type f 2>/dev/null | while read -r file; do
+                        if [ -f "$file" ] && [ -r "$file" ]; then
+                            echo "$(dirname "$file")" >> "$temp_file"
+                        fi
+                    done
+                fi
             ) &
         fi
     done
     wait  # 等待所有搜索完成
 
-    # 读取找到的目录并去重
-    if [ -f "$temp_file" ]; then
+    # 处理搜索结果
+    local all_locations=()
+    if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
         while IFS= read -r dir; do
             if [ -d "$dir" ] && [ -r "$dir" ]; then
-                found_dirs+=("$dir")
+                all_locations+=("$dir")
             fi
         done < <(sort -u "$temp_file")
-        rm -f "$temp_file"
     fi
+    rm -f "$temp_file"
 
-    # 如果没找到任何 xwPF.sh，尝试当前工作目录，最后才用脚本所在目录
-    if [ ${#found_dirs[@]} -eq 0 ]; then
-        local current_dir="$(pwd)"
-        if [ -f "$current_dir/xwPF.sh" ]; then
-            echo "$current_dir"
-        else
-            echo "$(dirname "$(readlink -f "$0")")"
-        fi
-        return 0
-    fi
-
-    # 评估每个目录的"工作目录特征"
-    local best_dir=""
-    local best_score=0
-    local best_path_length=999
-
-    for dir in "${found_dirs[@]}"; do
+    # 评分和排序
+    local scored_locations=()
+    for dir in "${all_locations[@]}"; do
         local score=0
         local path_length=${#dir}
 
-        # 检查是否包含 realm 压缩包（+10分）
+        # 用户自定义位置优先（非系统目录）+20分
+        if [[ "$dir" != "/usr/local/bin" && "$dir" != "/usr/bin" && "$dir" != "/bin" && "$dir" != "/usr/sbin" ]]; then
+            score=$((score + 20))
+        fi
+
+        # 包含realm压缩包+15分
         if ls "$dir"/realm-*.tar.gz >/dev/null 2>&1 || ls "$dir"/realm-*.zip >/dev/null 2>&1; then
+            score=$((score + 15))
+        fi
+
+        # 包含JSON配置文件+10分
+        if ls "$dir"/*.json >/dev/null 2>&1; then
             score=$((score + 10))
         fi
 
-        # 检查是否包含 .json 配置文件（+5分）
-        if ls "$dir"/*.json >/dev/null 2>&1; then
+        # 包含其他配置文件+5分
+        if ls "$dir"/*.conf >/dev/null 2>&1 || ls "$dir"/*.yaml >/dev/null 2>&1; then
             score=$((score + 5))
         fi
 
-        # 检查是否包含其他相关文件（+2分）
-        if ls "$dir"/*.conf >/dev/null 2>&1 || ls "$dir"/*.yaml >/dev/null 2>&1; then
-            score=$((score + 2))
-        fi
-
-        # 非系统目录优先（+3分）
-        if [[ "$dir" != "/usr/local/bin" && "$dir" != "/usr/bin" && "$dir" != "/bin" ]]; then
+        # 当前工作目录+3分
+        if [ "$dir" = "$(pwd)" ]; then
             score=$((score + 3))
         fi
 
-        # 当前工作目录额外加分（+1分）
-        if [ "$dir" = "$(pwd)" ]; then
-            score=$((score + 1))
-        fi
-
-        # 选择得分最高的目录，得分相同时选择路径更短的
-        if [ $score -gt $best_score ] || ([ $score -eq $best_score ] && [ $path_length -lt $best_path_length ]); then
-            best_score=$score
-            best_dir="$dir"
-            best_path_length=$path_length
-        fi
+        # 路径越短越好（用于同分情况下的排序）
+        scored_locations+=("$score:$path_length:$dir")
     done
 
-    # 返回最佳目录，如果没有找到合适的，返回第一个找到的
-    if [ -n "$best_dir" ]; then
-        echo "$best_dir"
-    else
-        echo "${found_dirs[0]}"
-    fi
+    # 按分数排序（分数高的在前），分数相同时按路径长度排序（短的在前）
+    local sorted_locations=($(printf '%s\n' "${scored_locations[@]}" | sort -t: -k1,1nr -k2,2n))
+
+    # 提取目录路径并保存到缓存
+    local final_locations=()
+    for item in "${sorted_locations[@]}"; do
+        local dir=$(echo "$item" | cut -d: -f3)
+        final_locations+=("$dir")
+    done
+
+    # 保存到缓存
+    printf '%s\n' "${final_locations[@]}" > "$cache_file"
+
+    # 输出结果
+    printf '%s\n' "${final_locations[@]}"
+}
+
+# 获取最佳脚本工作目录
+get_best_script_dir() {
+    local locations=($(find_script_locations_enhanced))
+
+    echo "${locations[0]}"
+}
+
+# 清理缓存函数
+clear_script_location_cache() {
+    rm -f "/tmp/xwPF_script_locations_cache"
+    echo -e "${GREEN}✓ 脚本位置缓存已清理${NC}"
 }
 
 # 确定工作目录 - 统一逻辑
@@ -3419,11 +3377,13 @@ install_realm() {
 
     # 检测本地压缩包
     echo -e "${YELLOW}检测本地 realm 压缩包...${NC}"
-    local script_dir=$(find_script_work_dir)
+    local script_dir=$(get_best_script_dir)
+    echo -e "${BLUE}脚本工作目录: $script_dir${NC}"
+
     local local_packages=($(find "$script_dir" -maxdepth 1 -name "realm-*.tar.gz" -o -name "realm-*.zip" 2>/dev/null))
 
     if [ ${#local_packages[@]} -gt 0 ]; then
-        echo -e "${GREEN}✓ 发现本地 realm 压缩包: ${local_packages[0]}${NC}"
+        echo -e "${GREEN}✓ 发现本地 realm 压缩包: $(basename "${local_packages[0]}")${NC}"
         read -p "是否使用本地压缩包安装？(y/n) [默认: y]: " use_local
         if [[ "$use_local" =~ ^[Nn]$ ]]; then
             echo -e "${BLUE}跳过本地安装，使用在线下载...${NC}"
@@ -4039,15 +3999,17 @@ generate_realm_config() {
             cat > "$CONFIG_PATH" <<EOF
 {
     "dns": {
-        "mode": "ipv4_then_ipv6",
-        "protocol": "https",
+        "mode": "ipv4_and_ipv6",
         "nameservers": [
-            "https://1.1.1.1/dns-query",
-            "https://8.8.8.8/dns-query"
+            "1.1.1.1:53",
+            "8.8.8.8:53",
+            "[2606:4700:4700::1111]:53",
+            "[2001:4860:4860::8888]:53"
         ],
+        "protocol": "tcp_and_udp",
         "min_ttl": 600,
         "max_ttl": 1800,
-        "cache_size": 1024
+        "cache_size": 256
     },
     "network": {
         "no_tcp": false,
@@ -4084,10 +4046,6 @@ EOF
         fi
     done
 
-    local dns_mode_config=$(get_ip_version_config "$ip_version_config")
-    local dns_protocol_config=$(get_dns_protocol_config "$protocol_type_config")
-    local dns_cache_config=$(get_dns_cache_config)
-
     # 生成最终配置文件
     cat > "$CONFIG_PATH" <<EOF
 {
@@ -4096,9 +4054,17 @@ EOF
         "output": "${LOG_PATH}"
     },
     "dns": {
-        $dns_mode_config,
-        $dns_protocol_config,
-        $dns_cache_config
+        "mode": "ipv4_and_ipv6",
+        "nameservers": [
+            "1.1.1.1:53",
+            "8.8.8.8:53",
+            "[2606:4700:4700::1111]:53",
+            "[2001:4860:4860::8888]:53"
+        ],
+        "protocol": "tcp_and_udp",
+        "min_ttl": 600,
+        "max_ttl": 1800,
+        "cache_size": 256
     },
     "network": {
         "no_tcp": false,
@@ -4166,17 +4132,17 @@ generate_legacy_config() {
         "output": "${LOG_PATH}"
     },
     "dns": {
-        "mode": "ipv4_then_ipv6",
+        "mode": "ipv4_and_ipv6",
         "nameservers": [
             "1.1.1.1:53",
             "8.8.8.8:53",
             "[2606:4700:4700::1111]:53",
             "[2001:4860:4860::8888]:53"
         ],
-        $(get_dns_protocol_config "$PROTOCOL_TYPE"),
+        "protocol": "tcp_and_udp",
         "min_ttl": 600,
         "max_ttl": 1800,
-        "cache_size": 1024
+        "cache_size": 256
     },
     "network": {
         "no_tcp": false,
@@ -4217,17 +4183,17 @@ EOF
         "output": "${LOG_PATH}"
     },
     "dns": {
-        "mode": "ipv4_then_ipv6",
+        "mode": "ipv4_and_ipv6",
         "nameservers": [
             "1.1.1.1:53",
             "8.8.8.8:53",
             "[2606:4700:4700::1111]:53",
             "[2001:4860:4860::8888]:53"
         ],
-        $(get_dns_protocol_config "$PROTOCOL_TYPE"),
+        "protocol": "tcp_and_udp",
         "min_ttl": 600,
         "max_ttl": 1800,
-        "cache_size": 1024
+        "cache_size": 256
     },
     "network": {
         "no_tcp": false,
@@ -4939,6 +4905,11 @@ uninstall_realm() {
 
     # 全面清理临时文件、缓存和下载文件
     echo -e "${BLUE}全面清理临时文件和缓存...${NC}"
+
+    # 清理新的脚本位置缓存
+    rm -f "/tmp/xwPF_script_locations_cache" && echo -e "${GREEN}✓${NC} 已清理脚本位置缓存"
+    rm -f "/tmp/xwPF_script_path_cache" && echo -e "${GREEN}✓${NC} 已清理脚本路径缓存"
+    rm -f "/tmp/realm_path_cache" && echo -e "${GREEN}✓${NC} 已清理故障转移路径缓存"
     local tmp_dirs=("/tmp" "/var/tmp" "/root" "/home" "/usr/local/tmp")
     for tmp_dir in "${tmp_dirs[@]}"; do
         if [ -d "$tmp_dir" ]; then
@@ -5210,17 +5181,15 @@ show_brief_status() {
 
     # 检查 realm 二进制文件是否存在
     if [ ! -f "${REALM_PATH}" ] || [ ! -x "${REALM_PATH}" ]; then
-        echo -e "${RED}错误: 无法从GitHub获取最新版本号${NC}"
-        echo -e "${YELLOW}网络可能不稳定或GitHub访问受限${NC}"
-        echo -e "${BLUE}稍后重试或参考https://github.com/zywe03/realm-xwPF#网络受限环境安装${NC}"
-        echo -e "${YELLOW}输入快捷命令 ${GREEN}pf${YELLOW} 可进入脚本交互界面${NC}"
+        echo -e " Realm状态：${RED} 未安装 ${NC}"
+        echo -e "${YELLOW}请选择 1. 安装配置 安装 Realm 程序${NC}"
         return
     fi
 
     # 检查配置文件是否存在
     if [ ! -f "$CONFIG_PATH" ]; then
         echo -e "${YELLOW}=== 配置缺失 ===${NC}"
-        echo -e "${BLUE}Realm 已安装但配置缺失，请运行 安装配置 来初始化配置${NC}"
+        echo -e "${BLUE}Realm 已安装但配置缺失，请运行 安装配置/添加配置 来初始化配置${NC}"
         return
     fi
 
@@ -5779,7 +5748,7 @@ cleanup_temp_files() {
     local cache_file="/tmp/realm_path_cache"
     if [ -f "$cache_file" ]; then
         local cache_age=$(( $(date +%s) - $(stat -f%m "$cache_file" 2>/dev/null || stat -c%Y "$cache_file" 2>/dev/null || echo 0) ))
-        if [ "$cache_age" -gt 86400 ]; then  # 24小时
+        if [ "$cache_age" -gt 604800 ]; then  # 7天
             rm -f "$cache_file"
         fi
     fi
@@ -6045,12 +6014,21 @@ create_config_monitor_service() {
 MONITOR_FILE="/tmp/realm_config_update_needed"
 CONFIG_FILE="/etc/realm/config.json"
 
-# 查找主脚本
+# 查找主脚本 - 统一的多线程搜索逻辑
 find_main_script() {
-    local script_path=""
+    local cache_file="/tmp/realm_path_cache"
 
-    # 常见位置检查（不包含用户自建目录）
-    local common_scripts=(
+    # 第一阶段：检查缓存
+    if [ -f "$cache_file" ]; then
+        cached_path=$(cat "$cache_file" 2>/dev/null)
+        if [ -f "$cached_path" ]; then
+            echo "$cached_path"
+            return 0
+        fi
+    fi
+
+    # 第二阶段：常见位置直接检查
+    local common_paths=(
         "/usr/local/bin/pf"
         "/usr/local/bin/xwPF.sh"
         "/root/xwPF.sh"
@@ -6059,23 +6037,36 @@ find_main_script() {
         "/usr/sbin/xwPF.sh"
     )
 
-    for path in "${common_scripts[@]}"; do
+    for path in "${common_paths[@]}"; do
         if [ -f "$path" ]; then
-            script_path="$path"
-            break
+            echo "$path" > "$cache_file"
+            echo "$path"
+            return 0
         fi
     done
 
-    # 如果还没找到，使用find搜索
-    if [ -z "$script_path" ]; then
-        if command -v timeout >/dev/null 2>&1; then
-            script_path=$(timeout 5 find /etc /var /opt /usr /home /root -maxdepth 3 -name "xwPF.sh" -type f 2>/dev/null | head -1)
-        else
-            script_path=$(find /etc /var /opt /usr /home /root -maxdepth 3 -name "xwPF.sh" -type f 2>/dev/null | head -1)
+    # 第三阶段：分区域限制深度搜索
+    local search_dirs=("/etc" "/var" "/opt" "/usr" "/home" "/root")
+    for dir in "${search_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            local found_path=$(timeout 30 find "$dir" -maxdepth 4 -name "xwPF.sh" -type f 2>/dev/null | head -1)
+            if [ -n "$found_path" ] && [ -f "$found_path" ]; then
+                echo "$found_path" > "$cache_file"
+                echo "$found_path"
+                return 0
+            fi
         fi
+    done
+
+    # 第四阶段：全系统搜索
+    local found_path=$(timeout 60 find / -name "xwPF.sh" -type f 2>/dev/null | head -1)
+    if [ -n "$found_path" ] && [ -f "$found_path" ]; then
+        echo "$found_path" > "$cache_file"
+        echo "$found_path"
+        return 0
     fi
 
-    echo "$script_path"
+    return 1
 }
 
 # 主循环
@@ -6241,7 +6232,7 @@ check_target_health() {
     return $?
 }
 
-# 读取规则文件函数
+# 健康检查脚本专用的读取规则文件函数
 read_rule_file() {
     local rule_file="$1"
     if [ ! -f "$rule_file" ]; then
@@ -6357,16 +6348,22 @@ done
 if [ "$config_changed" = true ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') [CONFIG] 检测到节点状态变化，正在更新配置..."
 
-    # 查找主脚本
+    # 查找主脚本 - 参考成功案例的分阶段查找
     script_path=""
+    cache_file="/tmp/realm_path_cache"
 
-    # 首先查找pf命令
-    script_path=$(which pf 2>/dev/null)
+    # 第一阶段：检查缓存
+    if [ -f "$cache_file" ]; then
+        cached_path=$(cat "$cache_file" 2>/dev/null)
+        if [ -f "$cached_path" ]; then
+            script_path="$cached_path"
+        fi
+    fi
 
-    # 如果没有pf命令，查找xwPF.sh脚本
-    if [ -z "$script_path" ] || [ ! -f "$script_path" ]; then
-        # 常见位置检查
-        common_scripts=(
+    # 第二阶段：常见位置直接检查
+    if [ -z "$script_path" ]; then
+        common_paths=(
+            "/usr/local/bin/pf"
             "/usr/local/bin/xwPF.sh"
             "/root/xwPF.sh"
             "/opt/xwPF.sh"
@@ -6374,40 +6371,43 @@ if [ "$config_changed" = true ]; then
             "/usr/sbin/xwPF.sh"
         )
 
-        for path in "${common_scripts[@]}"; do
+        for path in "${common_paths[@]}"; do
             if [ -f "$path" ]; then
+                echo "$path" > "$cache_file"
                 script_path="$path"
                 break
             fi
         done
+    fi
 
-        # 如果还没找到，分阶段搜索确保100%成功率
-        if [ -z "\$script_path" ]; then
-            # 第一轮：限制深度搜索
-            local search_dirs=("/etc" "/var" "/opt" "/usr" "/home" "/root")
-            for dir in "${search_dirs[@]}"; do
-                if [ -d "$dir" ]; then
-                    if command -v timeout >/dev/null 2>&1; then
-                        script_path=$(timeout 3 find "$dir" -maxdepth 4 -name "xwPF.sh" -type f 2>/dev/null | head -1)
-                    else
-                        script_path=$(find "$dir" -maxdepth 4 -name "xwPF.sh" -type f 2>/dev/null | head -1)
-                    fi
-
-                    if [ -n "$script_path" ] && [ -f "$script_path" ]; then
-                        break
-                    fi
-                fi
-            done
-
-            # 第二轮：如果还没找到，全系统搜索
-            if [ -z "$script_path" ]; then
-                if command -v timeout >/dev/null 2>&1; then
-                    script_path=$(timeout 10 find / -name "xwPF.sh" -type f 2>/dev/null | head -1)
-                else
-                    script_path=$(find /etc /var /opt /usr /home /root /tmp -name "xwPF.sh" -type f 2>/dev/null | head -1)
+    # 第三阶段：分区域限制深度搜索
+    if [ -z "$script_path" ]; then
+        search_dirs=("/etc" "/var" "/opt" "/usr" "/home" "/root")
+        for dir in "${search_dirs[@]}"; do
+            if [ -d "$dir" ]; then
+                found_path=$(timeout 30 find "$dir" -maxdepth 4 -name "xwPF.sh" -type f 2>/dev/null | head -1)
+                if [ -n "$found_path" ] && [ -f "$found_path" ]; then
+                    echo "$found_path" > "$cache_file"
+                    script_path="$found_path"
+                    break
                 fi
             fi
+        done
+    fi
+
+    # 第四阶段：全系统搜索
+    if [ -z "$script_path" ]; then
+        found_path=$(timeout 60 find / -name "xwPF.sh" -type f 2>/dev/null | head -1)
+        if [ -n "$found_path" ] && [ -f "$found_path" ]; then
+            echo "$found_path" > "$cache_file"
+            script_path="$found_path"
         fi
+    fi
+
+    # 验证是否找到脚本路径
+    if [ -z "$script_path" ] || [ ! -f "$script_path" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 无法找到主脚本，跳过配置更新"
+        exit 1
     fi
 
     # 创建配置更新标记文件，让inotify服务处理
