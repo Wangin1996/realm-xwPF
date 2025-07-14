@@ -27,7 +27,6 @@ RULE_ID=""
 RULE_NAME=""
 PROTOCOL_TYPE=""
 SECURITY_LEVEL=""
-IP_VERSION=""
 TLS_CERT_PATH=""
 TLS_KEY_PATH=""
 
@@ -385,31 +384,7 @@ validate_ip() {
     return 1
 }
 
-# 根据输入地址判断IP版本
-auto_detect_ip_version() {
-    local address="$1"
 
-    # 检查是否包含逗号（多地址）
-    if [[ "$address" == *","* ]]; then
-        echo "ipv4_then_ipv6"
-        return
-    fi
-
-    # 检查是否为IPv4地址
-    if [[ "$address" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        echo "ipv4_only"
-        return
-    fi
-
-    # 检查是否为IPv6地址
-    if [[ "$address" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$address" == *":"* ]]; then
-        echo "ipv6_only"
-        return
-    fi
-
-    # 域名或其他格式，默认使用双栈
-    echo "ipv4_then_ipv6"
-}
 
 # 验证转发目标地址（支持IP、域名、多地址）
 validate_target_address() {
@@ -699,13 +674,12 @@ create_rule_file() {
     local rule_name="$2"
     local protocol_type="$3"
     local security_level="$4"
-    local ip_version="$5"
-    local listen_port="$6"
-    local remote_host="$7"
-    local remote_port="$8"
-    local server_name="$9"
-    local cert_path="${10}"
-    local key_path="${11}"
+    local listen_port="$5"
+    local remote_host="$6"
+    local remote_port="$7"
+    local server_name="$8"
+    local cert_path="$9"
+    local key_path="${10}"
 
     local rule_file="${RULES_DIR}/rule-${rule_id}.conf"
 
@@ -718,7 +692,6 @@ RULE_ID=$rule_id
 RULE_NAME="$rule_name"
 PROTOCOL_TYPE="$protocol_type"
 SECURITY_LEVEL="$security_level"
-IP_VERSION="$ip_version"
 LISTEN_PORT="$listen_port"
 REMOTE_HOST="$remote_host"
 REMOTE_PORT="$remote_port"
@@ -1004,7 +977,7 @@ list_all_rules() {
                 echo -e "ID ${BLUE}$RULE_ID${NC}: $RULE_NAME"
                 # 构建安全级别显示
                 local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
-                echo -e "  协议: ${YELLOW}$PROTOCOL_TYPE${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC} | 状态: ${status_color}$status_text${NC}"
+                echo -e "  协议: ${YELLOW}$PROTOCOL_TYPE${NC} | 安全: ${YELLOW}$security_display${NC} | 状态: ${status_color}$status_text${NC}"
                 # 根据规则角色显示不同的转发信息
                 if [ "$RULE_ROLE" = "2" ]; then
                     # 落地服务器使用FORWARD_TARGET
@@ -1094,15 +1067,12 @@ interactive_add_rule() {
 
     if [ "$RULE_ROLE" -eq 1 ]; then
         # 中转服务器规则
-        local ip_version=$(auto_detect_ip_version "$REMOTE_IP")
-
         cat > "$rule_file" <<EOF
 RULE_ID=$rule_id
 RULE_NAME="中转"
 RULE_ROLE="1"
 PROTOCOL_TYPE="$PROTOCOL_TYPE"
 SECURITY_LEVEL="$SECURITY_LEVEL"
-IP_VERSION="$ip_version"
 LISTEN_PORT="$NAT_LISTEN_PORT"
 REMOTE_HOST="$REMOTE_IP"
 REMOTE_PORT="$REMOTE_PORT"
@@ -1127,19 +1097,16 @@ CONNECTION_TIMEOUT="3"
 EOF
 
         echo -e "${GREEN}✓ 中转配置已创建 (ID: $rule_id)${NC}"
-        echo -e "${BLUE}配置详情: $REMOTE_IP:$REMOTE_PORT (IP版本: $ip_version)${NC}"
+        echo -e "${BLUE}配置详情: $REMOTE_IP:$REMOTE_PORT${NC}"
 
     elif [ "$RULE_ROLE" -eq 2 ]; then
         # 出口服务器规则
-        local ip_version=$(auto_detect_ip_version "${FORWARD_TARGET%:*}")
-
         cat > "$rule_file" <<EOF
 RULE_ID=$rule_id
 RULE_NAME="落地"
 RULE_ROLE="2"
 PROTOCOL_TYPE="$PROTOCOL_TYPE"
 SECURITY_LEVEL="$SECURITY_LEVEL"
-IP_VERSION="$ip_version"
 LISTEN_PORT="$EXIT_LISTEN_PORT"
 FORWARD_TARGET="$FORWARD_TARGET"
 TLS_SERVER_NAME="$TLS_SERVER_NAME"
@@ -1163,7 +1130,7 @@ CONNECTION_TIMEOUT="3"
 EOF
 
         echo -e "${GREEN}✓ 转发配置已创建 (ID: $rule_id)${NC}"
-        echo -e "${BLUE}配置详情: $FORWARD_TARGET (IP版本: $ip_version)${NC}"
+        echo -e "${BLUE}配置详情: $FORWARD_TARGET${NC}"
     fi
 
     # 恢复原始变量状态
@@ -1389,14 +1356,6 @@ except Exception as e:
                 continue
             fi
 
-            # 自动检测IP版本
-            local ip_version="ipv4_then_ipv6"
-            if echo "$remote_host" | grep -q ":"; then
-                ip_version="ipv6_only"
-            elif echo "$remote_host" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
-                ip_version="ipv4_only"
-            fi
-
             # 生成规则名称
             local rule_name="导入"
 
@@ -1415,7 +1374,6 @@ RULE_NAME="$rule_name"
 RULE_ROLE="1"
 PROTOCOL_TYPE="tcp_udp"
 SECURITY_LEVEL="0"
-IP_VERSION="$ip_version"
 LISTEN_PORT="$listen_port"
 REMOTE_HOST="$remote_host"
 REMOTE_PORT="$remote_port"
@@ -1763,7 +1721,7 @@ rules_management_menu() {
                                 rule_display_name="$RULE_NAME-$relay_count"
                             fi
                             echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
-                            echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
+                            echo -e "    协议: ${YELLOW}$protocol_display${NC} | 安全: ${YELLOW}$security_display${NC} | "
                         fi
                     fi
                 done
@@ -1794,7 +1752,7 @@ rules_management_menu() {
                                 rule_display_name="$RULE_NAME-$exit_count"
                             fi
                             echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$target_port"
-                            echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
+                            echo -e "    协议: ${YELLOW}$protocol_display${NC} | 安全: ${YELLOW}$security_display${NC} | "
                         fi
                     fi
                 done
@@ -2831,19 +2789,25 @@ configure_exit_server() {
         esac
     done
 
-    # 传输模式选择 (落地服务器只提供TLS选项)
+    # 传输模式选择
     echo ""
     echo "请选择传输模式:"
-    echo -e "${GREEN}[1]${NC} TLS (自签证书，自动生成)"
-    echo -e "${GREEN}[2]${NC} TLS (CA签发证书)"
-    echo -e "${GREEN}[3]${NC} TLS+WebSocket (自签证书，伪装HTTPS流量)"
-    echo -e "${GREEN}[4]${NC} TLS+WebSocket (CA证书，伪装HTTPS流量)"
+    echo -e "${GREEN}[1]${NC} 默认传输 (无加密，不过墙使用)"
+    echo -e "${GREEN}[2]${NC} TLS (自签证书，自动生成)"
+    echo -e "${GREEN}[3]${NC} TLS (CA签发证书)"
+    echo -e "${GREEN}[4]${NC} TLS+WebSocket (自签证书，伪装HTTPS流量)"
+    echo -e "${GREEN}[5]${NC} TLS+WebSocket (CA证书，伪装HTTPS流量)"
     echo ""
 
     while true; do
-        read -p "请输入选择 [1-4]: " transport_choice
+        read -p "请输入选择 [1-5]: " transport_choice
         case $transport_choice in
             1)
+                SECURITY_LEVEL="standard"
+                echo -e "${GREEN}已选择: 默认传输${NC}"
+                break
+                ;;
+            2)
                 SECURITY_LEVEL="tls_self"
                 echo -e "${GREEN}已选择: TLS自签证书${NC}"
 
@@ -2857,7 +2821,7 @@ configure_exit_server() {
                 echo -e "${GREEN}TLS服务器名称设置为: $TLS_SERVER_NAME${NC}"
                 break
                 ;;
-            2)
+            3)
                 SECURITY_LEVEL="tls_ca"
                 echo -e "${GREEN}已选择: TLS CA证书${NC}"
 
@@ -2885,7 +2849,7 @@ configure_exit_server() {
                 echo -e "${GREEN}TLS配置完成${NC}"
                 break
                 ;;
-            3)
+            4)
                 SECURITY_LEVEL="ws_tls_self"
                 echo -e "${GREEN}已选择: TLS+WebSocket自签证书${NC}"
 
@@ -2906,7 +2870,7 @@ configure_exit_server() {
                 echo -e "${GREEN}WebSocket路径设置为: $WS_PATH${NC}"
                 break
                 ;;
-            4)
+            5)
                 SECURITY_LEVEL="ws_tls_ca"
                 echo -e "${GREEN}已选择: TLS+WebSocket CA证书${NC}"
 
@@ -2941,7 +2905,7 @@ configure_exit_server() {
                 break
                 ;;
             *)
-                echo -e "${RED}无效选择，请输入 1-4${NC}"
+                echo -e "${RED}无效选择，请输入 1-5${NC}"
                 ;;
         esac
     done
@@ -3404,17 +3368,17 @@ install_realm() {
     # 获取最新版本号
     echo -e "${YELLOW}获取最新版本信息...${NC}"
 
-    # 重试机制获取版本号（重试1次，超时3秒）
+    # 重试机制获取版本号（重试1次，超时4秒）
     LATEST_VERSION=""
 
     # 第一次尝试
-    LATEST_VERSION=$(curl -s --connect-timeout 3 --max-time 10 \
+    LATEST_VERSION=$(curl -s --connect-timeout 4 --max-time 8 \
         "https://api.github.com/repos/zhboner/realm/releases/latest" 2>/dev/null | \
         grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
     # 如果失败，立即重试1次
     if [ -z "$LATEST_VERSION" ]; then
-        LATEST_VERSION=$(curl -s --connect-timeout 3 --max-time 10 \
+        LATEST_VERSION=$(curl -s --connect-timeout 4 --max-time 8 \
             "https://api.github.com/repos/zhboner/realm/releases/latest" 2>/dev/null | \
             grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
@@ -3425,7 +3389,6 @@ install_realm() {
         LATEST_VERSION="v2.7.0"
     fi
 
-    echo -e "${GREEN}✓ 检测到最新版本: ${LATEST_VERSION}${NC}"
     echo -e "${GREEN}✓ 检测到最新版本: ${LATEST_VERSION}${NC}"
 
     # 检测系统架构
@@ -4034,12 +3997,10 @@ EOF
     local endpoints=$(generate_endpoints_from_rules)
 
     # 获取第一个启用规则的配置（作为全局配置）
-    local ip_version_config="ipv4_then_ipv6"
     local protocol_type_config="tcp_udp"
     for rule_file in "${RULES_DIR}"/rule-*.conf; do
         if [ -f "$rule_file" ]; then
             if read_rule_file "$rule_file" && [ "$ENABLED" = "true" ]; then
-                ip_version_config="${IP_VERSION:-ipv4_then_ipv6}"
                 protocol_type_config="${PROTOCOL_TYPE:-tcp_udp}"
                 break
             fi
@@ -4099,11 +4060,11 @@ EOF
                     local target_host="${FORWARD_TARGET%:*}"
                     local target_port="${FORWARD_TARGET##*:}"
                     local display_target=$(smart_display_target "$target_host")
-                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port ($PROTOCOL_TYPE, ${IP_VERSION:-ipv4_then_ipv6})"
+                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port ($PROTOCOL_TYPE)"
                 else
                     # 中转服务器使用REMOTE_HOST
                     local display_target=$(smart_display_target "$REMOTE_HOST")
-                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT ($PROTOCOL_TYPE, ${IP_VERSION:-ipv4_then_ipv6})"
+                    echo -e "  ${GREEN}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT ($PROTOCOL_TYPE)"
                 fi
             fi
         fi
@@ -4505,7 +4466,7 @@ service_status() {
                     fi
                     # 构建安全级别显示
                     local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
-                    echo -e "    协议: ${YELLOW}$PROTOCOL_TYPE${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
+                    echo -e "    协议: ${YELLOW}$PROTOCOL_TYPE${NC} | 安全: ${YELLOW}$security_display${NC} | "
                 fi
             fi
         done
@@ -5087,7 +5048,7 @@ show_config() {
                             echo -e "    监听: $LISTEN_PORT → $display_target:$REMOTE_PORT"
                         fi
                         local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH")
-                        echo -e "    协议: $PROTOCOL_TYPE | IP版本: ${IP_VERSION:-ipv4_then_ipv6} | 安全: $security_display"
+                        echo -e "    协议: $PROTOCOL_TYPE | 安全: $security_display | "
                         if [ "$SECURITY_LEVEL" = "tls_self" ]; then
                             local display_sni="${TLS_SERVER_NAME:-$DEFAULT_SNI_DOMAIN}"
                             echo -e "    TLS自签证书 (SNI: $display_sni)"
@@ -5247,7 +5208,7 @@ show_brief_status() {
                             rule_display_name="$RULE_NAME-$relay_count"
                         fi
                         echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$REMOTE_PORT"
-                        echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
+                        echo -e "    协议: ${YELLOW}$protocol_display${NC} | 安全: ${YELLOW}$security_display${NC} | "
                     fi
                 fi
             done
@@ -5278,7 +5239,7 @@ show_brief_status() {
                             rule_display_name="$RULE_NAME-$exit_count"
                         fi
                         echo -e "  • ${GREEN}$rule_display_name${NC}: $LISTEN_PORT → $display_target:$target_port"
-                        echo -e "    协议: ${YELLOW}$protocol_display${NC} | IP版本: ${YELLOW}${IP_VERSION:-ipv4_then_ipv6}${NC} | 安全: ${YELLOW}$security_display${NC}"
+                        echo -e "    协议: ${YELLOW}$protocol_display${NC} | 安全: ${YELLOW}$security_display${NC} | "
                     fi
                 fi
             done
@@ -6241,7 +6202,7 @@ read_rule_file() {
 
     # 清空变量
     unset RULE_ID RULE_NAME RULE_ROLE LISTEN_PORT REMOTE_HOST REMOTE_PORT
-    unset FORWARD_TARGET PROTOCOL_TYPE SECURITY_LEVEL IP_VERSION
+    unset FORWARD_TARGET PROTOCOL_TYPE SECURITY_LEVEL
     unset TLS_SERVER_NAME TLS_CERT_PATH TLS_KEY_PATH WS_PATH
     unset ENABLED BALANCE_MODE FAILOVER_ENABLED HEALTH_CHECK_INTERVAL
     unset FAILURE_THRESHOLD SUCCESS_THRESHOLD CONNECTION_TIMEOUT
